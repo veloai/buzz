@@ -26,5 +26,11 @@ export default defineConfig({
   server: {
     port: parseInt(process.env.VITE_PORT || "5173", 10),
     strictPort: true,
+    hmr: process.env.VITE_HMR_DISABLED === "true" ? false : undefined,
+  },
+  preview: {
+    port: parseInt(process.env.VITE_PORT || "4173", 10),
+    strictPort: true,
+    host: "127.0.0.1",
   },
 });

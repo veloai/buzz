@@ -12,7 +12,13 @@ export function relayHttpUrl(wsUrl: string): string {
 /** Read the relay WebSocket URL from environment or derive from window.location. */
 export function relayWsUrl(): string {
   const envUrl = import.meta.env.VITE_RELAY_URL;
-  if (envUrl) return envUrl;
+  if (envUrl) {
+    if (envUrl.startsWith("/")) {
+      const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
+      return `${proto}//${window.location.host}${envUrl}`;
+    }
+    return envUrl;
+  }
   // Same-origin: derive from current page location (works when served from relay)
   const proto = window.location.protocol === "https:" ? "wss:" : "ws:";
   return `${proto}//${window.location.host}`;

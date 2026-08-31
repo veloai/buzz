@@ -220,15 +220,20 @@ pub(crate) fn nip98_expected_url(
 /// the client's connect URL embedded in the signed AUTH event; the helper
 /// preserves the deployment's TLS posture from `config_relay_url`'s prefix so
 /// `wss://` deployments stay `wss://` and `ws://` dev/test stays `ws://`.
-/// Path is empty — clients put the bare WS origin (`ws://host[:port]`) in the
-/// `relay` tag, matching how `EventBuilder::auth` accepts a [`nostr::RelayUrl`].
+/// Host remains tenant-bound, while the configured relay path is preserved for
+/// same-origin proxy deployments such as `wss://alfa.example/buzz-relay`.
 pub(crate) fn nip42_expected_relay_url(config_relay_url: &str, tenant: &TenantContext) -> String {
     let scheme = if config_relay_url.trim_start().starts_with("wss://") {
         "wss"
     } else {
         "ws"
     };
-    format!("{scheme}://{}", tenant.host())
+    let path = url::Url::parse(config_relay_url)
+        .ok()
+        .map(|parsed| parsed.path().trim_end_matches('/').to_string())
+        .filter(|path| !path.is_empty())
+        .unwrap_or_default();
+    format!("{scheme}://{}{}", tenant.host(), path)
 }
 
 /// Extract a channel UUID from a single filter's `#h` tag.
@@ -3196,6 +3201,18 @@ mod tests {
             url_a, url_a_alt_config,
             "config-relay-url's host MUST NOT influence the NIP-42 expected URL — \
              only its scheme contributes"
+        );
+    }
+
+    /// Same-origin proxy deployments terminate TLS and expose the relay below a
+    /// path such as `/buzz-relay`; NIP-42 clients sign the full WebSocket URL.
+    #[test]
+    fn nip42_expected_relay_url_preserves_config_path() {
+        let tenant = fresh_tenant("alfa.example");
+
+        assert_eq!(
+            nip42_expected_relay_url("wss://config.example/buzz-relay/", &tenant),
+            "wss://alfa.example/buzz-relay"
         );
     }
 
