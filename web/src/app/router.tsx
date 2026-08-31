@@ -2,7 +2,14 @@ import { createBrowserHistory, createRouter } from "@tanstack/react-router";
 
 import { routeTree } from "@/app/routeTree.gen";
 
-const basepath = import.meta.env.VITE_BASE_PATH || "/";
+const configuredBasepath = import.meta.env.VITE_BASE_PATH || "/";
+
+const basepath =
+  configuredBasepath !== "/" &&
+  typeof window !== "undefined" &&
+  !window.location.pathname.startsWith(configuredBasepath)
+    ? "/"
+    : configuredBasepath;
 
 export const router = createRouter({
   routeTree,

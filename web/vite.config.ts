@@ -32,5 +32,11 @@ export default defineConfig({
     port: parseInt(process.env.VITE_PORT || "4173", 10),
     strictPort: true,
     host: "127.0.0.1",
+    allowedHosts: [
+      "127.0.0.1",
+      "localhost",
+      "alfa.uziseignk.com",
+      "buzz.uziseignk.com",
+    ],
   },
 });
