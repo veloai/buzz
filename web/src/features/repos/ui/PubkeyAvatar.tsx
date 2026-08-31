@@ -1,3 +1,5 @@
+import { UserRound } from "lucide-react";
+
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/shared/ui/tooltip";
 
 /** Simple hash of a hex pubkey to a hue value (0-360). */
@@ -26,7 +28,7 @@ export function PubkeyAvatar({
           className={`flex items-center justify-center rounded-lg font-medium text-white ${sizeClasses}`}
           style={{ backgroundColor: `hsl(${hue}, 55%, 45%)` }}
         >
-          {pubkey.slice(0, 2)}
+          <UserRound className={size === "sm" ? "h-3 w-3" : "h-4 w-4"} />
         </div>
       </TooltipTrigger>
       <TooltipContent>
