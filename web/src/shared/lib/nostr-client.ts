@@ -25,6 +25,111 @@ export type NostrEvent = SignedNostrEvent;
 
 const QUERY_TIMEOUT_MS = 10_000;
 
+export function subscribeEvents(
+  wsUrl: string,
+  filter: NostrFilter,
+  onEvent: (event: NostrEvent) => void,
+  onError?: (error: Error) => void,
+): () => void {
+  const subId = `s-${Date.now().toString(36)}`;
+  let closed = false;
+  let reqSent = false;
+  let authEventId: string | null = null;
+  let unauthenticatedReqTimer: ReturnType<typeof setTimeout> | null = null;
+  const ws = new WebSocket(wsUrl);
+
+  const cleanup = () => {
+    closed = true;
+    if (unauthenticatedReqTimer) {
+      clearTimeout(unauthenticatedReqTimer);
+    }
+    try {
+      ws.close();
+    } catch {
+      // ignore
+    }
+  };
+
+  const sendReq = () => {
+    if (!closed && !reqSent) {
+      reqSent = true;
+      ws.send(JSON.stringify(["REQ", subId, filter]));
+    }
+  };
+
+  ws.addEventListener("open", () => {
+    unauthenticatedReqTimer = setTimeout(() => sendReq(), 100);
+  });
+
+  ws.addEventListener("message", async (msg) => {
+    let data: unknown;
+    try {
+      data = JSON.parse(String(msg.data));
+    } catch {
+      return;
+    }
+    if (!Array.isArray(data)) return;
+
+    if (data[0] === "AUTH" && typeof data[1] === "string") {
+      if (unauthenticatedReqTimer) {
+        clearTimeout(unauthenticatedReqTimer);
+        unauthenticatedReqTimer = null;
+      }
+      try {
+        const signed = await signNostrEvent(makeAuthEvent(wsUrl, data[1]));
+        if (closed) return;
+        authEventId = signed.id;
+        ws.send(JSON.stringify(["AUTH", signed]));
+      } catch (error) {
+        onError?.(
+          error instanceof Error
+            ? error
+            : new Error("Failed to sign relay authentication."),
+        );
+      }
+      return;
+    }
+
+    if (data[0] === "OK" && data[1] === authEventId) {
+      if (data[2] === true) {
+        sendReq();
+      } else {
+        onError?.(
+          new Error(
+            typeof data[3] === "string"
+              ? data[3]
+              : "Relay authentication failed.",
+          ),
+        );
+      }
+      return;
+    }
+
+    if (data[0] === "EVENT" && data[1] === subId && data[2]) {
+      onEvent(data[2] as NostrEvent);
+      return;
+    }
+
+    if (data[0] === "CLOSED" && data[1] === subId) {
+      onError?.(
+        new Error(
+          typeof data[2] === "string"
+            ? data[2]
+            : "subscription closed by relay",
+        ),
+      );
+    }
+  });
+
+  ws.addEventListener("error", () => {
+    if (!closed) {
+      onError?.(new Error("WebSocket connection failed"));
+    }
+  });
+
+  return cleanup;
+}
+
 /**
  * Open a WebSocket to `wsUrl`, authenticate via NIP-42 if challenged,
  * send a REQ with the given filter, collect EVENTs until EOSE, then

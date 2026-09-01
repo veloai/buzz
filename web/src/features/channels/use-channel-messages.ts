@@ -1,7 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useEffect } from "react";
 import {
   publishEvent,
   queryEvents,
+  subscribeEvents,
   type NostrEvent,
 } from "@/shared/lib/nostr-client";
 import { relayWsUrl } from "@/shared/lib/relay-url";
@@ -69,6 +71,10 @@ function dedupById<T extends { id: string }>(items: T[]): T[] {
   return [...map.values()];
 }
 
+function sortMessages(messages: ChannelMessage[]): ChannelMessage[] {
+  return [...messages].sort((a, b) => a.createdAt - b.createdAt);
+}
+
 async function fetchChannels(): Promise<ChannelSummary[]> {
   const events = await queryEvents(relayWsUrl(), { kinds: [39000], limit: 50 });
   const channels = dedupById(
@@ -93,9 +99,7 @@ async function fetchMessages(channelId: string): Promise<ChannelMessage[]> {
     "#h": [channelId],
     limit: 200,
   });
-  return dedupById(events.map(eventToMessage)).sort(
-    (a, b) => a.createdAt - b.createdAt,
-  );
+  return sortMessages(dedupById(events.map(eventToMessage)));
 }
 
 export function useChannels() {
@@ -111,12 +115,38 @@ export function useChannelMessages(
   channelId: string,
   { enabled = true }: { enabled?: boolean } = {},
 ) {
+  const queryClient = useQueryClient();
+
+  useEffect(() => {
+    if (!(enabled && channelId)) return;
+
+    const unsubscribe = subscribeEvents(
+      relayWsUrl(),
+      {
+        kinds: [9],
+        "#h": [channelId],
+        since: Math.floor(Date.now() / 1000) - 5,
+      },
+      (event) => {
+        queryClient.setQueryData<ChannelMessage[]>(
+          ["channel-messages", channelId],
+          (currentMessages = []) =>
+            sortMessages(dedupById([...currentMessages, eventToMessage(event)])),
+        );
+      },
+      (error) => {
+        console.warn("Buzz channel subscription failed", error);
+      },
+    );
+
+    return unsubscribe;
+  }, [channelId, enabled, queryClient]);
+
   return useQuery({
     queryKey: ["channel-messages", channelId],
     queryFn: () => fetchMessages(channelId),
     enabled: enabled && !!channelId,
-    staleTime: 5_000,
-    refetchInterval: 5_000,
+    staleTime: 30_000,
   });
 }
 
@@ -135,10 +165,50 @@ export function useSendChannelMessage(channelId: string) {
         content: trimmed,
       });
     },
-    onSuccess: () => {
-      void queryClient.invalidateQueries({
+    onMutate: async (content) => {
+      const trimmed = content.trim();
+      const tempId = `pending-${window.crypto.randomUUID()}`;
+      await queryClient.cancelQueries({
         queryKey: ["channel-messages", channelId],
       });
+      queryClient.setQueryData<ChannelMessage[]>(
+        ["channel-messages", channelId],
+        (currentMessages = []) =>
+          sortMessages(
+            dedupById([
+              ...currentMessages,
+              {
+                id: tempId,
+                author: "local-user",
+                content: trimmed,
+                createdAt: Math.floor(Date.now() / 1000),
+              },
+            ]),
+          ),
+      );
+      return { tempId };
+    },
+    onError: (_error, _content, context) => {
+      if (!context?.tempId) return;
+      queryClient.setQueryData<ChannelMessage[]>(
+        ["channel-messages", channelId],
+        (currentMessages = []) =>
+          currentMessages.filter((message) => message.id !== context.tempId),
+      );
+    },
+    onSuccess: (event, _content, context) => {
+      queryClient.setQueryData<ChannelMessage[]>(
+        ["channel-messages", channelId],
+        (currentMessages = []) =>
+          sortMessages(
+            dedupById([
+              ...currentMessages.filter(
+                (message) => message.id !== context?.tempId,
+              ),
+              eventToMessage(event),
+            ]),
+          ),
+      );
     },
   });
 }
