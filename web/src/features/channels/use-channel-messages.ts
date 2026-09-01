@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect } from "react";
 import {
   publishEvent,
+  publishEventFast,
   queryEvents,
   subscribeEvents,
   type NostrEvent,
@@ -159,7 +160,7 @@ export function useSendChannelMessage(channelId: string) {
       if (!trimmed) {
         throw new Error("메시지를 입력하세요.");
       }
-      return publishEvent(relayWsUrl(), {
+      return publishEventFast(relayWsUrl(), {
         kind: 9,
         tags: [["h", channelId]],
         content: trimmed,

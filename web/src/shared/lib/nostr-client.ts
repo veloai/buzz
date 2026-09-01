@@ -24,6 +24,222 @@ export interface NostrFilter {
 export type NostrEvent = SignedNostrEvent;
 
 const QUERY_TIMEOUT_MS = 10_000;
+const UNAUTHENTICATED_GRACE_MS = 100;
+
+type PublishTemplate = {
+  kind: number;
+  tags: string[][];
+  content: string;
+};
+
+type PublishOptions = { requireNip07?: boolean };
+
+interface PendingPublish {
+  resolve: (event: NostrEvent) => void;
+  reject: (error: Error) => void;
+  event: NostrEvent;
+  timeout: ReturnType<typeof setTimeout>;
+}
+
+interface SharedPublisher {
+  ws: WebSocket;
+  ready: Promise<void>;
+  publish: (event: NostrEvent) => Promise<NostrEvent>;
+}
+
+const sharedPublishers = new Map<string, SharedPublisher>();
+
+function publisherKey(wsUrl: string, options?: PublishOptions): string {
+  return `${wsUrl}|nip07:${options?.requireNip07 === true ? "1" : "0"}`;
+}
+
+function createSharedPublisher(
+  wsUrl: string,
+  options?: PublishOptions,
+): SharedPublisher {
+  const pending = new Map<string, PendingPublish>();
+  const ws = new WebSocket(wsUrl);
+  let authEventId: string | null = null;
+  let readySettled = false;
+  let closed = false;
+  let unauthenticatedReadyTimer: ReturnType<typeof setTimeout> | null = null;
+  let resolveReady: () => void = () => {};
+  let rejectReady: (error: Error) => void = () => {};
+
+  const ready = new Promise<void>((resolve, reject) => {
+    resolveReady = resolve;
+    rejectReady = reject;
+  });
+
+  const markReady = () => {
+    if (readySettled || closed) return;
+    readySettled = true;
+    if (unauthenticatedReadyTimer) {
+      clearTimeout(unauthenticatedReadyTimer);
+      unauthenticatedReadyTimer = null;
+    }
+    resolveReady();
+  };
+
+  const fail = (error: Error) => {
+    if (!readySettled) {
+      readySettled = true;
+      rejectReady(error);
+    }
+    for (const item of pending.values()) {
+      clearTimeout(item.timeout);
+      item.reject(error);
+    }
+    pending.clear();
+  };
+
+  ws.addEventListener("open", () => {
+    unauthenticatedReadyTimer = setTimeout(
+      markReady,
+      UNAUTHENTICATED_GRACE_MS,
+    );
+  });
+
+  ws.addEventListener("message", async (msg) => {
+    let data: unknown;
+    try {
+      data = JSON.parse(String(msg.data));
+    } catch {
+      return;
+    }
+    if (!Array.isArray(data)) return;
+
+    if (data[0] === "AUTH" && typeof data[1] === "string") {
+      if (unauthenticatedReadyTimer) {
+        clearTimeout(unauthenticatedReadyTimer);
+        unauthenticatedReadyTimer = null;
+      }
+      try {
+        const signed = await signNostrEvent(
+          makeAuthEvent(wsUrl, data[1]),
+          options,
+        );
+        if (closed) return;
+        authEventId = signed.id;
+        ws.send(JSON.stringify(["AUTH", signed]));
+      } catch (error) {
+        fail(
+          error instanceof Error
+            ? error
+            : new Error("Failed to sign relay authentication."),
+        );
+      }
+      return;
+    }
+
+    if (data[0] === "OK" && data[1] === authEventId) {
+      if (data[2] === true) {
+        markReady();
+      } else {
+        fail(
+          new Error(
+            typeof data[3] === "string"
+              ? data[3]
+              : "Relay authentication failed.",
+          ),
+        );
+        try {
+          ws.close();
+        } catch {
+          // ignore
+        }
+      }
+      return;
+    }
+
+    if (data[0] === "OK" && typeof data[1] === "string") {
+      const item = pending.get(data[1]);
+      if (!item) return;
+      pending.delete(data[1]);
+      clearTimeout(item.timeout);
+      if (data[2] === true) {
+        item.resolve(item.event);
+      } else {
+        item.reject(
+          new Error(
+            typeof data[3] === "string"
+              ? data[3]
+              : "Relay rejected the event.",
+          ),
+        );
+      }
+    }
+  });
+
+  ws.addEventListener("error", () => {
+    fail(new Error("WebSocket connection failed"));
+    try {
+      ws.close();
+    } catch {
+      // ignore
+    }
+  });
+
+  ws.addEventListener("close", () => {
+    closed = true;
+    if (unauthenticatedReadyTimer) {
+      clearTimeout(unauthenticatedReadyTimer);
+      unauthenticatedReadyTimer = null;
+    }
+    fail(new Error("Relay connection closed."));
+    sharedPublishers.delete(publisherKey(wsUrl, options));
+  });
+
+  return {
+    ws,
+    ready,
+    publish: (event) =>
+      new Promise((resolve, reject) => {
+        if (closed || ws.readyState === WebSocket.CLOSING) {
+          reject(new Error("Relay connection is closing."));
+          return;
+        }
+        const timeout = setTimeout(() => {
+          pending.delete(event.id);
+          reject(
+            new Error(`Relay publish timed out after ${QUERY_TIMEOUT_MS}ms`),
+          );
+        }, QUERY_TIMEOUT_MS);
+        pending.set(event.id, { resolve, reject, event, timeout });
+        ws.send(JSON.stringify(["EVENT", event]));
+      }),
+  };
+}
+
+function getSharedPublisher(
+  wsUrl: string,
+  options?: PublishOptions,
+): SharedPublisher {
+  const key = publisherKey(wsUrl, options);
+  const existing = sharedPublishers.get(key);
+  if (
+    existing &&
+    existing.ws.readyState !== WebSocket.CLOSING &&
+    existing.ws.readyState !== WebSocket.CLOSED
+  ) {
+    return existing;
+  }
+
+  const publisher = createSharedPublisher(wsUrl, options);
+  sharedPublishers.set(key, publisher);
+  return publisher;
+}
+
+export async function publishEventFast(
+  wsUrl: string,
+  template: PublishTemplate,
+  options?: PublishOptions,
+): Promise<NostrEvent> {
+  const event = await signNostrEvent(template, options);
+  const publisher = getSharedPublisher(wsUrl, options);
+  await publisher.ready;
+  return publisher.publish(event);
+}
 
 export function subscribeEvents(
   wsUrl: string,
@@ -281,12 +497,8 @@ export function queryEvents(
 
 export function publishEvent(
   wsUrl: string,
-  template: {
-    kind: number;
-    tags: string[][];
-    content: string;
-  },
-  options?: { requireNip07?: boolean },
+  template: PublishTemplate,
+  options?: PublishOptions,
 ): Promise<NostrEvent> {
   return new Promise((resolve, reject) => {
     let settled = false;
