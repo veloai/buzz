@@ -14,14 +14,21 @@ import {
   useChannelMessages,
   useChannels,
   useSendChannelMessage,
+  type ChannelMessage,
   type ChannelSummary,
 } from "../use-channel-messages";
+
+const LOCAL_CHANNEL_MESSAGE_KEY_PREFIX = "buzz:local-channel-messages:";
 
 function formatTime(seconds: number): string {
   return new Intl.DateTimeFormat(undefined, {
     hour: "2-digit",
     minute: "2-digit",
   }).format(new Date(seconds * 1000));
+}
+
+function displayAuthor(author: string): string {
+  return author === "local-user" ? "나" : truncatePubkey(author);
 }
 
 function fallbackChannels(): ChannelSummary[] {
@@ -33,6 +40,37 @@ function fallbackChannels(): ChannelSummary[] {
       isVirtual: true,
     },
   ];
+}
+
+function readLocalMessages(channelId: string): ChannelMessage[] {
+  try {
+    const raw = window.localStorage.getItem(
+      `${LOCAL_CHANNEL_MESSAGE_KEY_PREFIX}${channelId}`,
+    );
+    if (!raw) return [];
+
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [];
+
+    return parsed.filter(
+      (item): item is ChannelMessage =>
+        typeof item === "object" &&
+        item !== null &&
+        typeof (item as ChannelMessage).id === "string" &&
+        typeof (item as ChannelMessage).author === "string" &&
+        typeof (item as ChannelMessage).content === "string" &&
+        typeof (item as ChannelMessage).createdAt === "number",
+    );
+  } catch {
+    return [];
+  }
+}
+
+function writeLocalMessages(channelId: string, messages: ChannelMessage[]) {
+  window.localStorage.setItem(
+    `${LOCAL_CHANNEL_MESSAGE_KEY_PREFIX}${channelId}`,
+    JSON.stringify(messages),
+  );
 }
 
 export function ChannelsPage() {
@@ -70,6 +108,17 @@ export function ChannelsPage() {
   });
   const sendMessage = useSendChannelMessage(selectedChannel.id);
   const [draft, setDraft] = useState("");
+  const [localMessages, setLocalMessages] = useState<ChannelMessage[]>(() =>
+    readLocalMessages(channels[0].id),
+  );
+  const visibleMessages = selectedChannel.isVirtual ? localMessages : messages;
+
+  useEffect(() => {
+    if (selectedChannel.isVirtual) {
+      setLocalMessages(readLocalMessages(selectedChannel.id));
+    }
+  }, [selectedChannel.id, selectedChannel.isVirtual]);
+
   useEffect(() => {
     if (channelsError) {
       toast.error("채널 목록을 불러오지 못했습니다.", {
@@ -90,6 +139,22 @@ export function ChannelsPage() {
     event.preventDefault();
     const content = draft.trim();
     if (!content) return;
+
+    if (selectedChannel.isVirtual) {
+      const message: ChannelMessage = {
+        id: window.crypto.randomUUID(),
+        author: "local-user",
+        content,
+        createdAt: Math.floor(Date.now() / 1000),
+      };
+      setLocalMessages((currentMessages) => {
+        const nextMessages = [...currentMessages, message];
+        writeLocalMessages(selectedChannel.id, nextMessages);
+        return nextMessages;
+      });
+      setDraft("");
+      return;
+    }
 
     try {
       await sendMessage.mutateAsync(content);
@@ -181,7 +246,13 @@ export function ChannelsPage() {
             <Button
               aria-label="메시지 새로고침"
               className="border-white/10 text-white/70 hover:bg-white/10"
-              onClick={() => void refetchMessages()}
+              onClick={() => {
+                if (selectedChannel.isVirtual) {
+                  setLocalMessages(readLocalMessages(selectedChannel.id));
+                  return;
+                }
+                void refetchMessages();
+              }}
               size="icon"
               type="button"
               variant="ghost"
@@ -216,7 +287,7 @@ export function ChannelsPage() {
                     </div>
                   ))}
                 </div>
-              ) : messages.length === 0 ? (
+              ) : visibleMessages.length === 0 ? (
                 <div className="flex h-full min-h-[360px] items-center justify-center">
                   <div className="max-w-md text-center">
                     <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-lg border border-[#ffb703]/30 bg-[#ffb703]/10 text-[#ffb703]">
@@ -226,22 +297,22 @@ export function ChannelsPage() {
                       아직 대화가 없습니다
                     </h3>
                     <p className="mt-2 text-sm leading-6 text-white/55">
-                      아래 입력창에서 ALFA 작업 대화를 시작하세요. 릴레이가
-                      쓰기를 요구하면 브라우저 서명 확장이 필요할 수 있습니다.
+                      아래 입력창에서 ALFA 작업 대화를 시작하세요. 기본 채널은
+                      이 브라우저 화면에 먼저 저장됩니다.
                     </p>
                   </div>
                 </div>
               ) : (
                 <div className="space-y-5">
-                  {messages.map((message) => (
+                  {visibleMessages.map((message) => (
                     <article className="flex gap-3" key={message.id}>
                       <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded bg-[#2a2416] text-sm font-semibold text-[#ffb703]">
-                        {truncatePubkey(message.author).charAt(0)}
+                        {displayAuthor(message.author).charAt(0)}
                       </div>
                       <div className="min-w-0">
                         <div className="flex flex-wrap items-baseline gap-2">
                           <span className="font-mono text-sm text-white/85">
-                            {truncatePubkey(message.author)}
+                            {displayAuthor(message.author)}
                           </span>
                           <time className="text-xs text-white/35">
                             {formatTime(message.createdAt)}
@@ -278,7 +349,10 @@ export function ChannelsPage() {
                 />
                 <Button
                   className="self-end bg-[#ffb703] text-black hover:bg-[#f5a900]"
-                  disabled={sendMessage.isPending || draft.trim().length === 0}
+                  disabled={
+                    (!selectedChannel.isVirtual && sendMessage.isPending) ||
+                    draft.trim().length === 0
+                  }
                   size="icon"
                   type="submit"
                 >
