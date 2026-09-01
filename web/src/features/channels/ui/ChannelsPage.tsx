@@ -22,8 +22,11 @@ import { Button } from "@/shared/ui/button";
 import {
   DEFAULT_CHANNEL_ID,
   useChannelMessages,
+  useArchiveChannel,
+  useCreateChannel,
   useChannels,
   useSendChannelMessage,
+  useUpdateChannel,
   type ChannelMessage,
   type ChannelSummary,
 } from "../use-channel-messages";
@@ -65,7 +68,7 @@ const COPY = {
     deleteChannel: "채널 삭제",
     noMessagesTitle: "아직 대화가 없습니다",
     noMessagesBody:
-      "아래 입력창에서 ALFA 작업 대화를 시작하세요. 기본 채널은 이 브라우저 화면에 먼저 저장됩니다.",
+      "아래 입력창에서 ALFA 작업 대화를 시작하세요. 릴레이 채널은 기기 사이에서 공유됩니다.",
     messageInput: "메시지 입력",
     messagePlaceholder: (name: string) => `#${name}에 메시지 보내기`,
     channelTools: "채널 도구",
@@ -75,13 +78,18 @@ const COPY = {
     currentChannelVisibility: "현재 채널 공개범위",
     editNameDescription: "이름/설명 수정",
     webScope:
-      "이 웹판 설정은 현재 브라우저에 저장됩니다. 실제 멤버 초대, 에이전트 투입, 공유 릴레이 권한은 다음 연결 대상입니다.",
+      "새 채널은 릴레이에 저장됩니다. 비공개 채널은 만든 사람과 초대된 멤버만 접근합니다.",
     nameRequired: "채널 이름을 입력하세요.",
+    channelCreated: "채널을 만들었습니다.",
+    channelSaved: "채널을 저장했습니다.",
     defaultUpdated: "기본 채널 공개범위를 저장했습니다.",
     defaultRelayManaged:
       "기본 ALFA Control은 공유 릴레이 채널이라 웹 로컬 설정으로 바꾸지 않습니다.",
     defaultNotDeleted: "기본 ALFA Control은 삭제할 수 없습니다.",
     deleted: "채널을 삭제했습니다.",
+    createFailed: "채널을 만들지 못했습니다.",
+    saveFailed: "채널을 저장하지 못했습니다.",
+    deleteFailed: "채널을 삭제하지 못했습니다.",
     loadChannelsFailed: "채널 목록을 불러오지 못했습니다.",
     loadMessagesFailed: "메시지를 불러오지 못했습니다.",
     sendFailed: "메시지를 보내지 못했습니다.",
@@ -108,7 +116,7 @@ const COPY = {
     deleteChannel: "Delete channel",
     noMessagesTitle: "No messages yet",
     noMessagesBody:
-      "Start an ALFA work conversation below. The default channel is saved in this browser first.",
+      "Start an ALFA work conversation below. Relay-backed channels are shared across devices.",
     messageInput: "Message input",
     messagePlaceholder: (name: string) => `Message #${name}`,
     channelTools: "Channel tools",
@@ -118,13 +126,18 @@ const COPY = {
     currentChannelVisibility: "Current channel visibility",
     editNameDescription: "Edit name/description",
     webScope:
-      "These web settings are saved in this browser. Member invites, agent assignment, and shared relay permissions are the next connection target.",
+      "New channels are saved on the relay. Private channels are limited to the creator and invited members.",
     nameRequired: "Enter a channel name.",
+    channelCreated: "Channel created.",
+    channelSaved: "Channel saved.",
     defaultUpdated: "Default channel visibility saved.",
     defaultRelayManaged:
       "The default ALFA Control channel is shared on the relay and is not changed by local web settings.",
     defaultNotDeleted: "The default ALFA Control channel cannot be deleted.",
     deleted: "Channel deleted.",
+    createFailed: "Failed to create channel.",
+    saveFailed: "Failed to save channel.",
+    deleteFailed: "Failed to delete channel.",
     loadChannelsFailed: "Failed to load channels.",
     loadMessagesFailed: "Failed to load messages.",
     sendFailed: "Failed to send message.",
@@ -200,7 +213,7 @@ function readLocalChannels(): ChannelSummary[] {
       .filter((channel) => channel.id !== DEFAULT_CHANNEL_ID)
       .map((channel) => ({
         ...channel,
-        visibility: normalizeVisibility(channel.visibility),
+        visibility: "open" as const,
         isVirtual: true,
       }));
   } catch {
@@ -329,6 +342,9 @@ export function ChannelsPage() {
     enabled: !selectedChannel.isVirtual,
   });
   const sendMessage = useSendChannelMessage(selectedChannel.id);
+  const createChannel = useCreateChannel();
+  const updateChannel = useUpdateChannel(selectedChannel.id);
+  const archiveChannel = useArchiveChannel(selectedChannel.id);
   const [draft, setDraft] = useState("");
   const [localMessages, setLocalMessages] = useState<ChannelMessage[]>(() =>
     readLocalMessages(channels[0].id),
@@ -417,24 +433,31 @@ export function ChannelsPage() {
     writeLocalChannels(nextChannels);
   }
 
-  function handleCreateChannel() {
-    const newChannel: ChannelSummary = {
-      id: window.crypto.randomUUID(),
-      name: text.newChannelName,
-      description: text.newChannelDescription,
-      visibility: settings.defaultVisibility,
-      isVirtual: true,
-    };
-    const nextChannels = [...localChannels, newChannel];
-    updateLocalChannelState(nextChannels);
-    setSelectedChannelId(newChannel.id);
-    setChannelNameDraft(newChannel.name);
-    setChannelDescriptionDraft(newChannel.description);
-    setChannelVisibilityDraft(normalizeVisibility(newChannel.visibility));
-    setIsEditingChannel(true);
+  async function handleCreateChannel() {
+    const newChannelId = window.crypto.randomUUID();
+    try {
+      await createChannel.mutateAsync({
+        id: newChannelId,
+        name: text.newChannelName,
+        description: text.newChannelDescription,
+        visibility: settings.defaultVisibility,
+      });
+      await refetchChannels();
+      setSelectedChannelId(newChannelId);
+      setChannelNameDraft(text.newChannelName);
+      setChannelDescriptionDraft(text.newChannelDescription);
+      setChannelVisibilityDraft(settings.defaultVisibility);
+      setIsEditingChannel(true);
+      toast.success(text.channelCreated);
+    } catch (error) {
+      toast.error(text.createFailed, {
+        description:
+          error instanceof Error ? error.message : text.relayRejected,
+      });
+    }
   }
 
-  function handleSaveChannel() {
+  async function handleSaveChannel() {
     const name = channelNameDraft.trim();
     if (!name) {
       toast.error(text.nameRequired);
@@ -447,13 +470,32 @@ export function ChannelsPage() {
       return;
     }
 
+    if (!selectedChannel.isVirtual) {
+      try {
+        await updateChannel.mutateAsync({
+          name,
+          description: channelDescriptionDraft.trim() || text.noDescription,
+          visibility: channelVisibilityDraft,
+        });
+        await refetchChannels();
+        setIsEditingChannel(false);
+        toast.success(text.channelSaved);
+      } catch (error) {
+        toast.error(text.saveFailed, {
+          description:
+            error instanceof Error ? error.message : text.relayRejected,
+        });
+      }
+      return;
+    }
+
     const nextChannels = localChannels.map((channel) =>
       channel.id === selectedChannel.id
         ? {
             ...channel,
             name,
             description: channelDescriptionDraft.trim() || text.noDescription,
-            visibility: channelVisibilityDraft,
+            visibility: "open" as const,
             isVirtual: true,
           }
         : channel,
@@ -462,9 +504,23 @@ export function ChannelsPage() {
     setIsEditingChannel(false);
   }
 
-  function handleDeleteChannel() {
+  async function handleDeleteChannel() {
     if (isDefaultChannel) {
       toast.error(text.defaultNotDeleted);
+      return;
+    }
+    if (!selectedChannel.isVirtual) {
+      try {
+        await archiveChannel.mutateAsync();
+        await refetchChannels();
+        setSelectedChannelId(DEFAULT_CHANNEL_ID);
+        toast.success(text.deleted);
+      } catch (error) {
+        toast.error(text.deleteFailed, {
+          description:
+            error instanceof Error ? error.message : text.relayRejected,
+        });
+      }
       return;
     }
     const nextChannels = localChannels.filter(
@@ -493,6 +549,7 @@ export function ChannelsPage() {
               <Button
                 aria-label={text.createChannel}
                 className="h-7 w-7 border-white/10 text-white/70 hover:bg-white/10"
+                disabled={createChannel.isPending}
                 onClick={handleCreateChannel}
                 size="icon"
                 type="button"
@@ -735,6 +792,7 @@ export function ChannelsPage() {
                             : "text-white/60 hover:bg-white/10 hover:text-white"
                         }`}
                         key={visibility}
+                        disabled={selectedChannel.isVirtual}
                         onClick={() => setChannelVisibilityDraft(visibility)}
                         type="button"
                       >
@@ -751,6 +809,7 @@ export function ChannelsPage() {
                     <Button
                       aria-label={text.saveChannel}
                       className="border-white/10 text-white/80 hover:bg-white/10"
+                      disabled={updateChannel.isPending}
                       onClick={handleSaveChannel}
                       size="icon"
                       type="button"
@@ -761,7 +820,7 @@ export function ChannelsPage() {
                     <Button
                       aria-label={text.deleteChannel}
                       className="border-red-400/20 text-red-300 hover:bg-red-400/10"
-                      disabled={isDefaultChannel}
+                      disabled={isDefaultChannel || archiveChannel.isPending}
                       onClick={handleDeleteChannel}
                       size="icon"
                       type="button"
@@ -868,6 +927,7 @@ export function ChannelsPage() {
             <div className="mt-4 space-y-2">
               <Button
                 className="w-full justify-start border-white/10 text-white/75 hover:bg-white/10"
+                disabled={createChannel.isPending}
                 onClick={handleCreateChannel}
                 type="button"
                 variant="ghost"
@@ -886,7 +946,7 @@ export function ChannelsPage() {
               </Button>
               <Button
                 className="w-full justify-start border-red-400/20 text-red-300 hover:bg-red-400/10"
-                disabled={isDefaultChannel}
+                disabled={isDefaultChannel || archiveChannel.isPending}
                 onClick={handleDeleteChannel}
                 type="button"
                 variant="ghost"

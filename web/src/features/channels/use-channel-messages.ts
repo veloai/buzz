@@ -34,10 +34,16 @@ function firstTag(event: NostrEvent, name: string): string | undefined {
   return event.tags.find((tag) => tag[0] === name)?.[1];
 }
 
+function hasTag(event: NostrEvent, name: string): boolean {
+  return event.tags.some((tag) => tag[0] === name);
+}
+
 function eventToChannel(event: NostrEvent): ChannelSummary {
   const id = firstTag(event, "d") ?? event.id;
   const visibility =
-    firstTag(event, "visibility") === "private" ? "private" : "open";
+    firstTag(event, "visibility") === "private" || hasTag(event, "private")
+      ? "private"
+      : "open";
   return {
     id,
     name: firstTag(event, "name") || "untitled-channel",
@@ -65,7 +71,12 @@ function dedupById<T extends { id: string }>(items: T[]): T[] {
 
 async function fetchChannels(): Promise<ChannelSummary[]> {
   const events = await queryEvents(relayWsUrl(), { kinds: [39000], limit: 50 });
-  const channels = dedupById(events.map(eventToChannel)).sort((a, b) =>
+  const channels = dedupById(
+    events
+      .filter((event) => firstTag(event, "archived") !== "true")
+      .sort((a, b) => a.created_at - b.created_at)
+      .map(eventToChannel),
+  ).sort((a, b) =>
     a.name.localeCompare(b.name, undefined, { sensitivity: "base" }),
   );
 
@@ -128,6 +139,97 @@ export function useSendChannelMessage(channelId: string) {
       void queryClient.invalidateQueries({
         queryKey: ["channel-messages", channelId],
       });
+    },
+  });
+}
+
+export function useCreateChannel() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({
+      id,
+      name,
+      description,
+      visibility,
+    }: {
+      id: string;
+      name: string;
+      description: string;
+      visibility: "open" | "private";
+    }) =>
+      publishEvent(
+        relayWsUrl(),
+        {
+          kind: 9007,
+          tags: [
+            ["h", id],
+            ["name", name],
+            ["about", description],
+            ["visibility", visibility],
+            ["channel_type", "stream"],
+          ],
+          content: "",
+        },
+        { requireNip07: visibility === "private" },
+      ),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["channels"] });
+    },
+  });
+}
+
+export function useUpdateChannel(channelId: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async ({
+      name,
+      description,
+      visibility,
+    }: {
+      name: string;
+      description: string;
+      visibility: "open" | "private";
+    }) =>
+      publishEvent(
+        relayWsUrl(),
+        {
+          kind: 9002,
+          tags: [
+            ["h", channelId],
+            ["name", name],
+            ["about", description],
+            ["visibility", visibility],
+          ],
+          content: "",
+        },
+        { requireNip07: visibility === "private" },
+      ),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["channels"] });
+      void queryClient.invalidateQueries({
+        queryKey: ["channel-messages", channelId],
+      });
+    },
+  });
+}
+
+export function useArchiveChannel(channelId: string) {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: async () =>
+      publishEvent(relayWsUrl(), {
+        kind: 9002,
+        tags: [
+          ["h", channelId],
+          ["archived", "true"],
+        ],
+        content: "",
+      }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["channels"] });
     },
   });
 }

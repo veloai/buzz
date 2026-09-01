@@ -174,11 +174,15 @@ export function queryEvents(
   });
 }
 
-export function publishEvent(wsUrl: string, template: {
-  kind: number;
-  tags: string[][];
-  content: string;
-}): Promise<NostrEvent> {
+export function publishEvent(
+  wsUrl: string,
+  template: {
+    kind: number;
+    tags: string[][];
+    content: string;
+  },
+  options?: { requireNip07?: boolean },
+): Promise<NostrEvent> {
   return new Promise((resolve, reject) => {
     let settled = false;
     let signedEvent: NostrEvent | null = null;
@@ -213,7 +217,7 @@ export function publishEvent(wsUrl: string, template: {
         return;
       }
       try {
-        signedEvent = await signNostrEvent(template);
+        signedEvent = await signNostrEvent(template, options);
         if (!settled) {
           ws.send(JSON.stringify(["EVENT", signedEvent]));
         }
@@ -253,7 +257,7 @@ export function publishEvent(wsUrl: string, template: {
         const challenge = data[1];
         const template = makeAuthEvent(wsUrl, challenge);
         try {
-          const signed = await signNostrEvent(template);
+          const signed = await signNostrEvent(template, options);
           if (settled) return;
           authEventId = signed.id;
           publishAfterAuth = true;
