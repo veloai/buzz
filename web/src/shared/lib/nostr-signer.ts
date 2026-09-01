@@ -35,7 +35,41 @@ export class Nip07UnavailableError extends Error {
   }
 }
 
+const PERSISTED_BROWSER_KEY = "buzz:nip07-fallback-secret-key";
 let ephemeralSecretKey: Uint8Array | null = null;
+
+function bytesToHex(bytes: Uint8Array): string {
+  return [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+function hexToBytes(value: string): Uint8Array | null {
+  if (!/^[0-9a-f]{64}$/i.test(value)) return null;
+  const bytes = new Uint8Array(32);
+  for (let index = 0; index < bytes.length; index += 1) {
+    bytes[index] = Number.parseInt(value.slice(index * 2, index * 2 + 2), 16);
+  }
+  return bytes;
+}
+
+function getBrowserSecretKey(): Uint8Array {
+  if (typeof window === "undefined") {
+    return getEphemeralSecretKey();
+  }
+
+  try {
+    const existing = window.localStorage.getItem(PERSISTED_BROWSER_KEY);
+    const existingBytes = existing ? hexToBytes(existing) : null;
+    if (existingBytes) {
+      return existingBytes;
+    }
+
+    const generated = generateSecretKey();
+    window.localStorage.setItem(PERSISTED_BROWSER_KEY, bytesToHex(generated));
+    return generated;
+  } catch {
+    return getEphemeralSecretKey();
+  }
+}
 
 function getEphemeralSecretKey(): Uint8Array {
   if (!ephemeralSecretKey) {
@@ -61,11 +95,11 @@ function sameUnsignedEvent(
 }
 
 /**
- * Sign with NIP-07 when available, otherwise use a page-lifetime key.
+ * Sign with NIP-07 when available, otherwise use a browser-persisted key.
  *
- * The ephemeral fallback preserves anonymous browsing on open relays. Flows
- * that create durable membership must set `requireNip07` so a reload cannot
- * orphan a relay-membership row.
+ * The persisted fallback keeps channel ownership usable after reload in the
+ * web-only client. If localStorage is unavailable, it falls back to a
+ * page-lifetime key for read/write continuity inside the current tab.
  */
 export async function signNostrEvent(
   template: Omit<UnsignedNostrEvent, "created_at"> & {
@@ -94,13 +128,19 @@ export async function signNostrEvent(
   }
 
   if (options?.requireNip07) {
-    throw new Nip07UnavailableError();
+    return signWithSecretKey(unsigned, getBrowserSecretKey());
   }
 
-  const secretKey = getEphemeralSecretKey();
+  return signWithSecretKey(unsigned, getBrowserSecretKey());
+}
+
+function signWithSecretKey(
+  unsigned: UnsignedNostrEvent,
+  secretKey: Uint8Array,
+): SignedNostrEvent {
   const signed = finalizeEvent(unsigned, secretKey);
   if (signed.pubkey !== getPublicKey(secretKey)) {
-    throw new Error("Failed to create the ephemeral browser identity.");
+    throw new Error("Failed to create the browser identity.");
   }
   return signed;
 }

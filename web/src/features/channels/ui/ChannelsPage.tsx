@@ -78,7 +78,7 @@ const COPY = {
     currentChannelVisibility: "현재 채널 공개범위",
     editNameDescription: "이름/설명 수정",
     webScope:
-      "새 채널은 릴레이에 저장됩니다. 비공개 채널은 만든 사람과 초대된 멤버만 접근합니다.",
+      "새 채널은 릴레이에 저장됩니다. 비공개 채널은 이 브라우저 신원 또는 NIP-07 신원으로 잠깁니다.",
     nameRequired: "채널 이름을 입력하세요.",
     channelCreated: "채널을 만들었습니다.",
     channelSaved: "채널을 저장했습니다.",
@@ -126,7 +126,7 @@ const COPY = {
     currentChannelVisibility: "Current channel visibility",
     editNameDescription: "Edit name/description",
     webScope:
-      "New channels are saved on the relay. Private channels are limited to the creator and invited members.",
+      "New channels are saved on the relay. Private channels are locked to this browser identity or your NIP-07 identity.",
     nameRequired: "Enter a channel name.",
     channelCreated: "Channel created.",
     channelSaved: "Channel saved.",
@@ -792,7 +792,7 @@ export function ChannelsPage() {
                             : "text-white/60 hover:bg-white/10 hover:text-white"
                         }`}
                         key={visibility}
-                        disabled={selectedChannel.isVirtual}
+                        disabled={selectedChannel.isVirtual || isDefaultChannel}
                         onClick={() => setChannelVisibilityDraft(visibility)}
                         type="button"
                       >
