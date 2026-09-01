@@ -27,8 +27,7 @@ const defaultChannel: ChannelSummary = {
   id: DEFAULT_CHANNEL_ID,
   name: "ALFA Control",
   description: "mac-air ALFA, Hermes, Buzz 작업 대화",
-  visibility: "private",
-  isVirtual: true,
+  visibility: "open",
 };
 
 function firstTag(event: NostrEvent, name: string): string | undefined {

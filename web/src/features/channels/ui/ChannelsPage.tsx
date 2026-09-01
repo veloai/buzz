@@ -78,6 +78,8 @@ const COPY = {
       "이 웹판 설정은 현재 브라우저에 저장됩니다. 실제 멤버 초대, 에이전트 투입, 공유 릴레이 권한은 다음 연결 대상입니다.",
     nameRequired: "채널 이름을 입력하세요.",
     defaultUpdated: "기본 채널 공개범위를 저장했습니다.",
+    defaultRelayManaged:
+      "기본 ALFA Control은 공유 릴레이 채널이라 웹 로컬 설정으로 바꾸지 않습니다.",
     defaultNotDeleted: "기본 ALFA Control은 삭제할 수 없습니다.",
     deleted: "채널을 삭제했습니다.",
     loadChannelsFailed: "채널 목록을 불러오지 못했습니다.",
@@ -119,6 +121,8 @@ const COPY = {
       "These web settings are saved in this browser. Member invites, agent assignment, and shared relay permissions are the next connection target.",
     nameRequired: "Enter a channel name.",
     defaultUpdated: "Default channel visibility saved.",
+    defaultRelayManaged:
+      "The default ALFA Control channel is shared on the relay and is not changed by local web settings.",
     defaultNotDeleted: "The default ALFA Control channel cannot be deleted.",
     deleted: "Channel deleted.",
     loadChannelsFailed: "Failed to load channels.",
@@ -170,8 +174,7 @@ function fallbackChannels(): ChannelSummary[] {
       id: DEFAULT_CHANNEL_ID,
       name: "ALFA Control",
       description: "mac-air ALFA, Hermes, Buzz 작업 대화",
-      visibility: "private",
-      isVirtual: true,
+      visibility: "open",
     },
   ];
 }
@@ -313,9 +316,9 @@ export function ChannelsPage() {
     [channels, selectedChannelId],
   );
   const isDefaultChannel = selectedChannel.id === DEFAULT_CHANNEL_ID;
-  const selectedChannelVisibility = isDefaultChannel
-    ? settings.defaultVisibility
-    : normalizeVisibility(selectedChannel.visibility);
+  const selectedChannelVisibility = normalizeVisibility(
+    selectedChannel.visibility,
+  );
 
   const {
     data: messages = [],
@@ -439,8 +442,7 @@ export function ChannelsPage() {
     }
 
     if (isDefaultChannel) {
-      handleUpdateDefaultVisibility(channelVisibilityDraft);
-      toast.success(text.defaultUpdated);
+      toast.info(text.defaultRelayManaged);
       setIsEditingChannel(false);
       return;
     }
