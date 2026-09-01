@@ -173,3 +173,158 @@ export function queryEvents(
     });
   });
 }
+
+export function publishEvent(wsUrl: string, template: {
+  kind: number;
+  tags: string[][];
+  content: string;
+}): Promise<NostrEvent> {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    let signedEvent: NostrEvent | null = null;
+    let authEventId: string | null = null;
+    let publishAfterAuth = false;
+    let unauthenticatedPublishTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const ws = new WebSocket(wsUrl);
+    const timeout = setTimeout(() => {
+      if (!settled) {
+        settled = true;
+        ws.close();
+        reject(new Error(`Relay publish timed out after ${QUERY_TIMEOUT_MS}ms`));
+      }
+    }, QUERY_TIMEOUT_MS);
+
+    const cleanup = () => {
+      clearTimeout(timeout);
+      if (unauthenticatedPublishTimer) {
+        clearTimeout(unauthenticatedPublishTimer);
+      }
+      try {
+        ws.close();
+      } catch {
+        // ignore
+      }
+    };
+
+    const sendEvent = async () => {
+      if (signedEvent) {
+        ws.send(JSON.stringify(["EVENT", signedEvent]));
+        return;
+      }
+      try {
+        signedEvent = await signNostrEvent(template);
+        if (!settled) {
+          ws.send(JSON.stringify(["EVENT", signedEvent]));
+        }
+      } catch (error) {
+        if (!settled) {
+          settled = true;
+          cleanup();
+          reject(
+            error instanceof Error
+              ? error
+              : new Error("Failed to sign event."),
+          );
+        }
+      }
+    };
+
+    ws.addEventListener("open", () => {
+      unauthenticatedPublishTimer = setTimeout(() => {
+        void sendEvent();
+      }, 100);
+    });
+
+    ws.addEventListener("message", async (msg) => {
+      let data: unknown;
+      try {
+        data = JSON.parse(String(msg.data));
+      } catch {
+        return;
+      }
+      if (!Array.isArray(data)) return;
+
+      if (data[0] === "AUTH" && typeof data[1] === "string") {
+        if (unauthenticatedPublishTimer) {
+          clearTimeout(unauthenticatedPublishTimer);
+          unauthenticatedPublishTimer = null;
+        }
+        const challenge = data[1];
+        const template = makeAuthEvent(wsUrl, challenge);
+        try {
+          const signed = await signNostrEvent(template);
+          if (settled) return;
+          authEventId = signed.id;
+          publishAfterAuth = true;
+          ws.send(JSON.stringify(["AUTH", signed]));
+        } catch (error) {
+          if (!settled) {
+            settled = true;
+            cleanup();
+            reject(
+              error instanceof Error
+                ? error
+                : new Error("Failed to sign relay authentication."),
+            );
+          }
+        }
+        return;
+      }
+
+      if (data[0] === "OK" && data[1] === authEventId) {
+        if (data[2] === true && publishAfterAuth) {
+          publishAfterAuth = false;
+          void sendEvent();
+        } else if (!settled) {
+          settled = true;
+          cleanup();
+          reject(
+            new Error(
+              typeof data[3] === "string"
+                ? data[3]
+                : "Relay authentication failed.",
+            ),
+          );
+        }
+        return;
+      }
+
+      if (data[0] === "OK" && signedEvent && data[1] === signedEvent.id) {
+        if (!settled) {
+          settled = true;
+          if (data[2] === true) {
+            const event = signedEvent;
+            cleanup();
+            resolve(event);
+          } else {
+            cleanup();
+            reject(
+              new Error(
+                typeof data[3] === "string"
+                  ? data[3]
+                  : "Relay rejected the event.",
+              ),
+            );
+          }
+        }
+      }
+    });
+
+    ws.addEventListener("error", () => {
+      if (!settled) {
+        settled = true;
+        cleanup();
+        reject(new Error("WebSocket connection failed"));
+      }
+    });
+
+    ws.addEventListener("close", () => {
+      if (!settled) {
+        settled = true;
+        clearTimeout(timeout);
+        reject(new Error("Relay closed before confirming the event."));
+      }
+    });
+  });
+}

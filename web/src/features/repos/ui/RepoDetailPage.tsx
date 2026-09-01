@@ -98,7 +98,7 @@ function BackToRepositories({
   );
 
   return mockPreview ? (
-    <a href="/?preview=repositories" className={className}>
+    <a href="/repos" className={className}>
       {content}
     </a>
   ) : (
