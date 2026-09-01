@@ -5,6 +5,7 @@ import {
   publishEventFast,
   queryEvents,
   subscribeEvents,
+  warmPublishConnection,
   type NostrEvent,
 } from "@/shared/lib/nostr-client";
 import { relayWsUrl } from "@/shared/lib/relay-url";
@@ -139,6 +140,7 @@ export function useChannelMessages(
         console.warn("Buzz channel subscription failed", error);
       },
     );
+    warmPublishConnection(relayWsUrl());
 
     return unsubscribe;
   }, [channelId, enabled, queryClient]);
@@ -169,7 +171,7 @@ export function useSendChannelMessage(channelId: string) {
     onMutate: async (content) => {
       const trimmed = content.trim();
       const tempId = `pending-${window.crypto.randomUUID()}`;
-      await queryClient.cancelQueries({
+      void queryClient.cancelQueries({
         queryKey: ["channel-messages", channelId],
       });
       queryClient.setQueryData<ChannelMessage[]>(

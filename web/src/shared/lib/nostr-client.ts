@@ -241,6 +241,15 @@ export async function publishEventFast(
   return publisher.publish(event);
 }
 
+export function warmPublishConnection(
+  wsUrl: string,
+  options?: PublishOptions,
+): void {
+  void getSharedPublisher(wsUrl, options).ready.catch(() => {
+    // A later publish will create a fresh connection if warm-up failed.
+  });
+}
+
 export function subscribeEvents(
   wsUrl: string,
   filter: NostrFilter,

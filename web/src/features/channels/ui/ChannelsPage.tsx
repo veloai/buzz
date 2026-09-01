@@ -404,10 +404,11 @@ export function ChannelsPage() {
       return;
     }
 
+    setDraft("");
     try {
       await sendMessage.mutateAsync(content);
-      setDraft("");
     } catch (error) {
+      setDraft(content);
       toast.error(text.sendFailed, {
         description:
           error instanceof Error ? error.message : text.relayRejected,
@@ -833,7 +834,8 @@ export function ChannelsPage() {
               </div>
             )}
             <div className="flex-1 overflow-y-auto px-4 py-5 md:px-6">
-              {channelsLoading || messagesLoading ? (
+              {(channelsLoading || messagesLoading) &&
+              visibleMessages.length === 0 ? (
                 <div className="space-y-4">
                   {["a", "b", "c"].map((item) => (
                     <div className="flex gap-3" key={item}>
@@ -906,10 +908,7 @@ export function ChannelsPage() {
                 />
                 <Button
                   className="self-end bg-[#ffb703] text-black hover:bg-[#f5a900]"
-                  disabled={
-                    (!selectedChannel.isVirtual && sendMessage.isPending) ||
-                    draft.trim().length === 0
-                  }
+                  disabled={draft.trim().length === 0}
                   size="icon"
                   type="submit"
                 >
