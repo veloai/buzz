@@ -10,6 +10,7 @@ export interface ChannelSummary {
   id: string;
   name: string;
   description: string;
+  visibility?: "open" | "private";
   isVirtual?: boolean;
 }
 
@@ -26,6 +27,7 @@ const defaultChannel: ChannelSummary = {
   id: DEFAULT_CHANNEL_ID,
   name: "ALFA Control",
   description: "mac-air ALFA, Hermes, Buzz 작업 대화",
+  visibility: "private",
   isVirtual: true,
 };
 
@@ -35,10 +37,13 @@ function firstTag(event: NostrEvent, name: string): string | undefined {
 
 function eventToChannel(event: NostrEvent): ChannelSummary {
   const id = firstTag(event, "d") ?? event.id;
+  const visibility =
+    firstTag(event, "visibility") === "private" ? "private" : "open";
   return {
     id,
     name: firstTag(event, "name") || "untitled-channel",
     description: firstTag(event, "about") || event.content || "",
+    visibility,
   };
 }
 

@@ -1,13 +1,17 @@
 import {
   BookMarked,
+  Globe2,
   Hash,
+  Lock,
   MessageSquareText,
   Pencil,
   Plus,
   RefreshCw,
   Save,
   Send,
+  Settings,
   Trash2,
+  Unlock,
   UsersRound,
   X,
 } from "lucide-react";
@@ -27,6 +31,105 @@ import {
 const DEFAULT_CHANNELS = fallbackChannels();
 const LOCAL_CHANNELS_KEY = "buzz:local-channels";
 const LOCAL_CHANNEL_MESSAGE_KEY_PREFIX = "buzz:local-channel-messages:";
+const SETTINGS_KEY = "buzz:web-settings";
+
+type BuzzWebLanguage = "ko" | "en";
+type ChannelVisibility = "open" | "private";
+
+interface BuzzWebSettings {
+  language: BuzzWebLanguage;
+  defaultVisibility: ChannelVisibility;
+}
+
+const DEFAULT_SETTINGS: BuzzWebSettings = {
+  language: "ko",
+  defaultVisibility: "private",
+};
+
+const COPY = {
+  ko: {
+    buzzName: "하이브마인드",
+    channels: "채널",
+    createChannel: "채널 만들기",
+    refreshChannels: "채널 새로고침",
+    editChannel: "채널 수정",
+    refreshMessages: "메시지 새로고침",
+    repos: "저장소",
+    defaultBadge: "기본",
+    localBadge: "로컬",
+    open: "공개",
+    private: "비공개",
+    channelName: "채널 이름",
+    channelDescription: "채널 설명",
+    saveChannel: "채널 저장",
+    deleteChannel: "채널 삭제",
+    noMessagesTitle: "아직 대화가 없습니다",
+    noMessagesBody:
+      "아래 입력창에서 ALFA 작업 대화를 시작하세요. 기본 채널은 이 브라우저 화면에 먼저 저장됩니다.",
+    messageInput: "메시지 입력",
+    messagePlaceholder: (name: string) => `#${name}에 메시지 보내기`,
+    channelTools: "채널 도구",
+    settings: "설정",
+    language: "표시 언어",
+    newChannelVisibility: "새 채널 기본 공개범위",
+    currentChannelVisibility: "현재 채널 공개범위",
+    editNameDescription: "이름/설명 수정",
+    webScope:
+      "이 웹판 설정은 현재 브라우저에 저장됩니다. 실제 멤버 초대, 에이전트 투입, 공유 릴레이 권한은 다음 연결 대상입니다.",
+    nameRequired: "채널 이름을 입력하세요.",
+    defaultUpdated: "기본 채널 공개범위를 저장했습니다.",
+    defaultNotDeleted: "기본 ALFA Control은 삭제할 수 없습니다.",
+    deleted: "채널을 삭제했습니다.",
+    loadChannelsFailed: "채널 목록을 불러오지 못했습니다.",
+    loadMessagesFailed: "메시지를 불러오지 못했습니다.",
+    sendFailed: "메시지를 보내지 못했습니다.",
+    relayRejected: "릴레이가 전송을 거절했습니다.",
+    newChannelName: "새 작업방",
+    newChannelDescription: "새 ALFA 작업 대화",
+    noDescription: "설명 없음",
+  },
+  en: {
+    buzzName: "Hivemind",
+    channels: "Channels",
+    createChannel: "Create channel",
+    refreshChannels: "Refresh channels",
+    editChannel: "Edit channel",
+    refreshMessages: "Refresh messages",
+    repos: "Repositories",
+    defaultBadge: "Default",
+    localBadge: "Local",
+    open: "Open",
+    private: "Private",
+    channelName: "Channel name",
+    channelDescription: "Channel description",
+    saveChannel: "Save channel",
+    deleteChannel: "Delete channel",
+    noMessagesTitle: "No messages yet",
+    noMessagesBody:
+      "Start an ALFA work conversation below. The default channel is saved in this browser first.",
+    messageInput: "Message input",
+    messagePlaceholder: (name: string) => `Message #${name}`,
+    channelTools: "Channel tools",
+    settings: "Settings",
+    language: "Language",
+    newChannelVisibility: "New channel default visibility",
+    currentChannelVisibility: "Current channel visibility",
+    editNameDescription: "Edit name/description",
+    webScope:
+      "These web settings are saved in this browser. Member invites, agent assignment, and shared relay permissions are the next connection target.",
+    nameRequired: "Enter a channel name.",
+    defaultUpdated: "Default channel visibility saved.",
+    defaultNotDeleted: "The default ALFA Control channel cannot be deleted.",
+    deleted: "Channel deleted.",
+    loadChannelsFailed: "Failed to load channels.",
+    loadMessagesFailed: "Failed to load messages.",
+    sendFailed: "Failed to send message.",
+    relayRejected: "The relay rejected the message.",
+    newChannelName: "New room",
+    newChannelDescription: "New ALFA work conversation",
+    noDescription: "No description",
+  },
+} as const;
 
 function formatTime(seconds: number): string {
   return new Intl.DateTimeFormat(undefined, {
@@ -39,12 +142,35 @@ function displayAuthor(author: string): string {
   return author === "local-user" ? "나" : truncatePubkey(author);
 }
 
+function normalizeVisibility(value: unknown): ChannelVisibility {
+  return value === "open" ? "open" : "private";
+}
+
+function readSettings(): BuzzWebSettings {
+  try {
+    const raw = window.localStorage.getItem(SETTINGS_KEY);
+    if (!raw) return DEFAULT_SETTINGS;
+    const parsed = JSON.parse(raw) as Partial<BuzzWebSettings>;
+    return {
+      language: parsed.language === "en" ? "en" : "ko",
+      defaultVisibility: normalizeVisibility(parsed.defaultVisibility),
+    };
+  } catch {
+    return DEFAULT_SETTINGS;
+  }
+}
+
+function writeSettings(settings: BuzzWebSettings) {
+  window.localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+}
+
 function fallbackChannels(): ChannelSummary[] {
   return [
     {
       id: DEFAULT_CHANNEL_ID,
       name: "ALFA Control",
       description: "mac-air ALFA, Hermes, Buzz 작업 대화",
+      visibility: "private",
       isVirtual: true,
     },
   ];
@@ -69,16 +195,23 @@ function readLocalChannels(): ChannelSummary[] {
     return parsed
       .filter(isChannelSummary)
       .filter((channel) => channel.id !== DEFAULT_CHANNEL_ID)
-      .map((channel) => ({ ...channel, isVirtual: true }));
+      .map((channel) => ({
+        ...channel,
+        visibility: normalizeVisibility(channel.visibility),
+        isVirtual: true,
+      }));
   } catch {
     return [];
   }
 }
 
 function writeLocalChannels(channels: ChannelSummary[]) {
+  const persistedChannels = channels.filter(
+    (channel) => channel.id !== DEFAULT_CHANNEL_ID,
+  );
   window.localStorage.setItem(
     LOCAL_CHANNELS_KEY,
-    JSON.stringify(channels.filter((channel) => channel.id !== DEFAULT_CHANNEL_ID)),
+    JSON.stringify(persistedChannels),
   );
 }
 
@@ -114,7 +247,9 @@ function writeLocalMessages(channelId: string, messages: ChannelMessage[]) {
 }
 
 function removeLocalMessages(channelId: string) {
-  window.localStorage.removeItem(`${LOCAL_CHANNEL_MESSAGE_KEY_PREFIX}${channelId}`);
+  window.localStorage.removeItem(
+    `${LOCAL_CHANNEL_MESSAGE_KEY_PREFIX}${channelId}`,
+  );
 }
 
 function mergeChannels(
@@ -126,6 +261,13 @@ function mergeChannels(
     map.set(channel.id, channel);
   }
   return [...map.values()];
+}
+
+function visibilityLabel(
+  visibility: ChannelVisibility,
+  language: BuzzWebLanguage,
+) {
+  return COPY[language][visibility];
 }
 
 export function ChannelsPage() {
@@ -148,8 +290,15 @@ export function ChannelsPage() {
   );
   const [selectedChannelId, setSelectedChannelId] = useState(channels[0].id);
   const [isEditingChannel, setIsEditingChannel] = useState(false);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [settings, setSettings] = useState<BuzzWebSettings>(() =>
+    readSettings(),
+  );
   const [channelNameDraft, setChannelNameDraft] = useState("");
   const [channelDescriptionDraft, setChannelDescriptionDraft] = useState("");
+  const [channelVisibilityDraft, setChannelVisibilityDraft] =
+    useState<ChannelVisibility>("private");
+  const text = COPY[settings.language];
 
   useEffect(() => {
     if (!channels.some((channel) => channel.id === selectedChannelId)) {
@@ -164,6 +313,9 @@ export function ChannelsPage() {
     [channels, selectedChannelId],
   );
   const isDefaultChannel = selectedChannel.id === DEFAULT_CHANNEL_ID;
+  const selectedChannelVisibility = isDefaultChannel
+    ? settings.defaultVisibility
+    : normalizeVisibility(selectedChannel.visibility);
 
   const {
     data: messages = [],
@@ -189,23 +341,28 @@ export function ChannelsPage() {
   useEffect(() => {
     setChannelNameDraft(selectedChannel.name);
     setChannelDescriptionDraft(selectedChannel.description);
-  }, [selectedChannel.description, selectedChannel.name]);
+    setChannelVisibilityDraft(selectedChannelVisibility);
+  }, [
+    selectedChannel.description,
+    selectedChannel.name,
+    selectedChannelVisibility,
+  ]);
 
   useEffect(() => {
     if (channelsError) {
-      toast.error("채널 목록을 불러오지 못했습니다.", {
+      toast.error(text.loadChannelsFailed, {
         description: (channelsError as Error).message,
       });
     }
-  }, [channelsError]);
+  }, [channelsError, text.loadChannelsFailed]);
 
   useEffect(() => {
     if (messagesError && !selectedChannel.isVirtual) {
-      toast.error("메시지를 불러오지 못했습니다.", {
+      toast.error(text.loadMessagesFailed, {
         description: (messagesError as Error).message,
       });
     }
-  }, [messagesError, selectedChannel.isVirtual]);
+  }, [messagesError, selectedChannel.isVirtual, text.loadMessagesFailed]);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -232,11 +389,24 @@ export function ChannelsPage() {
       await sendMessage.mutateAsync(content);
       setDraft("");
     } catch (error) {
-      toast.error("메시지를 보내지 못했습니다.", {
+      toast.error(text.sendFailed, {
         description:
-          error instanceof Error ? error.message : "릴레이가 전송을 거절했습니다.",
+          error instanceof Error ? error.message : text.relayRejected,
       });
     }
+  }
+
+  function updateSettings(nextSettings: BuzzWebSettings) {
+    setSettings(nextSettings);
+    writeSettings(nextSettings);
+  }
+
+  function handleUpdateLanguage(language: BuzzWebLanguage) {
+    updateSettings({ ...settings, language });
+  }
+
+  function handleUpdateDefaultVisibility(visibility: ChannelVisibility) {
+    updateSettings({ ...settings, defaultVisibility: visibility });
   }
 
   function updateLocalChannelState(nextChannels: ChannelSummary[]) {
@@ -247,25 +417,30 @@ export function ChannelsPage() {
   function handleCreateChannel() {
     const newChannel: ChannelSummary = {
       id: window.crypto.randomUUID(),
-      name: "새 작업방",
-      description: "새 ALFA 작업 대화",
+      name: text.newChannelName,
+      description: text.newChannelDescription,
+      visibility: settings.defaultVisibility,
       isVirtual: true,
     };
     const nextChannels = [...localChannels, newChannel];
     updateLocalChannelState(nextChannels);
     setSelectedChannelId(newChannel.id);
+    setChannelNameDraft(newChannel.name);
+    setChannelDescriptionDraft(newChannel.description);
+    setChannelVisibilityDraft(normalizeVisibility(newChannel.visibility));
     setIsEditingChannel(true);
   }
 
   function handleSaveChannel() {
     const name = channelNameDraft.trim();
     if (!name) {
-      toast.error("채널 이름을 입력하세요.");
+      toast.error(text.nameRequired);
       return;
     }
 
     if (isDefaultChannel) {
-      toast.info("기본 ALFA Control은 삭제하지 않고 이름만 화면에서 유지합니다.");
+      handleUpdateDefaultVisibility(channelVisibilityDraft);
+      toast.success(text.defaultUpdated);
       setIsEditingChannel(false);
       return;
     }
@@ -275,7 +450,8 @@ export function ChannelsPage() {
         ? {
             ...channel,
             name,
-            description: channelDescriptionDraft.trim() || "설명 없음",
+            description: channelDescriptionDraft.trim() || text.noDescription,
+            visibility: channelVisibilityDraft,
             isVirtual: true,
           }
         : channel,
@@ -286,7 +462,7 @@ export function ChannelsPage() {
 
   function handleDeleteChannel() {
     if (isDefaultChannel) {
-      toast.error("기본 ALFA Control은 삭제할 수 없습니다.");
+      toast.error(text.defaultNotDeleted);
       return;
     }
     const nextChannels = localChannels.filter(
@@ -295,7 +471,7 @@ export function ChannelsPage() {
     updateLocalChannelState(nextChannels);
     removeLocalMessages(selectedChannel.id);
     setSelectedChannelId(DEFAULT_CHANNEL_ID);
-    toast.success("채널을 삭제했습니다.");
+    toast.success(text.deleted);
   }
 
   return (
@@ -305,15 +481,15 @@ export function ChannelsPage() {
           <div className="text-xs font-semibold uppercase tracking-[0.18em] text-[#ffb703]">
             Buzz
           </div>
-          <h1 className="mt-1 text-lg font-semibold">하이브마인드</h1>
+          <h1 className="mt-1 text-lg font-semibold">{text.buzzName}</h1>
         </div>
 
         <div className="flex-1 overflow-y-auto px-3 py-4">
           <div className="mb-2 flex items-center justify-between px-2 text-xs font-medium uppercase tracking-[0.14em] text-white/45">
-            채널
+            {text.channels}
             <div className="flex items-center gap-1">
               <Button
-                aria-label="채널 만들기"
+                aria-label={text.createChannel}
                 className="h-7 w-7 border-white/10 text-white/70 hover:bg-white/10"
                 onClick={handleCreateChannel}
                 size="icon"
@@ -323,7 +499,7 @@ export function ChannelsPage() {
                 <Plus className="h-3.5 w-3.5" />
               </Button>
               <Button
-                aria-label="채널 새로고침"
+                aria-label={text.refreshChannels}
                 className="h-7 w-7 border-white/10 text-white/70 hover:bg-white/10"
                 onClick={() => void refetchChannels()}
                 size="icon"
@@ -351,6 +527,13 @@ export function ChannelsPage() {
                 >
                   <Hash className="h-4 w-4 shrink-0" />
                   <span className="truncate">{channel.name}</span>
+                  <span
+                    className={`ml-auto h-2 w-2 shrink-0 rounded-full ${
+                      normalizeVisibility(channel.visibility) === "open"
+                        ? "bg-emerald-400"
+                        : "bg-[#ffb703]"
+                    }`}
+                  />
                 </button>
               );
             })}
@@ -362,7 +545,7 @@ export function ChannelsPage() {
           href="/repos"
         >
           <BookMarked className="h-4 w-4" />
-          저장소 보기
+          {text.repos}
         </a>
       </aside>
 
@@ -376,9 +559,23 @@ export function ChannelsPage() {
               </h2>
               {selectedChannel.isVirtual && (
                 <span className="rounded border border-[#ffb703]/40 px-2 py-0.5 text-xs text-[#ffb703]">
-                  {isDefaultChannel ? "기본" : "로컬"}
+                  {isDefaultChannel ? text.defaultBadge : text.localBadge}
                 </span>
               )}
+              <span
+                className={`inline-flex items-center gap-1 rounded border px-2 py-0.5 text-xs ${
+                  selectedChannelVisibility === "open"
+                    ? "border-emerald-400/30 text-emerald-300"
+                    : "border-[#ffb703]/40 text-[#ffb703]"
+                }`}
+              >
+                {selectedChannelVisibility === "open" ? (
+                  <Unlock className="h-3 w-3" />
+                ) : (
+                  <Lock className="h-3 w-3" />
+                )}
+                {visibilityLabel(selectedChannelVisibility, settings.language)}
+              </span>
             </div>
             <p className="mt-1 truncate text-xs text-white/50">
               {selectedChannel.description}
@@ -387,7 +584,21 @@ export function ChannelsPage() {
 
           <div className="flex items-center gap-2">
             <Button
-              aria-label="채널 수정"
+              aria-label={text.settings}
+              className="border-white/10 text-white/70 hover:bg-white/10"
+              onClick={() => setIsSettingsOpen((current) => !current)}
+              size="icon"
+              type="button"
+              variant="ghost"
+            >
+              {isSettingsOpen ? (
+                <X className="h-4 w-4" />
+              ) : (
+                <Settings className="h-4 w-4" />
+              )}
+            </Button>
+            <Button
+              aria-label={text.editChannel}
               className="border-white/10 text-white/70 hover:bg-white/10"
               onClick={() => setIsEditingChannel((current) => !current)}
               size="icon"
@@ -401,7 +612,7 @@ export function ChannelsPage() {
               )}
             </Button>
             <Button
-              aria-label="메시지 새로고침"
+              aria-label={text.refreshMessages}
               className="border-white/10 text-white/70 hover:bg-white/10"
               onClick={() => {
                 if (selectedChannel.isVirtual) {
@@ -423,7 +634,7 @@ export function ChannelsPage() {
             >
               <a href="/repos">
                 <BookMarked className="h-4 w-4" />
-                저장소
+                {text.repos}
               </a>
             </Button>
           </div>
@@ -431,26 +642,112 @@ export function ChannelsPage() {
 
         <section className="flex min-h-0 flex-1">
           <div className="flex min-w-0 flex-1 flex-col">
+            {isSettingsOpen && (
+              <div className="border-b border-white/10 bg-[#161616] px-4 py-3 md:px-6">
+                <div className="grid gap-3 lg:grid-cols-2">
+                  <div>
+                    <div className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.14em] text-white/45">
+                      <Globe2 className="h-4 w-4 text-[#ffb703]" />
+                      {text.language}
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      {(["ko", "en"] as const).map((language) => (
+                        <Button
+                          className={`border-white/10 ${
+                            settings.language === language
+                              ? "bg-[#ffb703] text-black hover:bg-[#f5a900]"
+                              : "text-white/75 hover:bg-white/10"
+                          }`}
+                          key={language}
+                          onClick={() => handleUpdateLanguage(language)}
+                          type="button"
+                          variant="ghost"
+                        >
+                          {language === "ko" ? "한국어" : "English"}
+                        </Button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div>
+                    <div className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.14em] text-white/45">
+                      <Lock className="h-4 w-4 text-[#ffb703]" />
+                      {text.newChannelVisibility}
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      {(["private", "open"] as const).map((visibility) => (
+                        <Button
+                          className={`border-white/10 ${
+                            settings.defaultVisibility === visibility
+                              ? "bg-[#ffb703] text-black hover:bg-[#f5a900]"
+                              : "text-white/75 hover:bg-white/10"
+                          }`}
+                          key={visibility}
+                          onClick={() =>
+                            handleUpdateDefaultVisibility(visibility)
+                          }
+                          type="button"
+                          variant="ghost"
+                        >
+                          {visibility === "private" ? (
+                            <Lock className="h-4 w-4" />
+                          ) : (
+                            <Unlock className="h-4 w-4" />
+                          )}
+                          {visibilityLabel(visibility, settings.language)}
+                        </Button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
             {isEditingChannel && (
               <div className="border-b border-white/10 bg-[#181818] px-4 py-3 md:px-6">
-                <div className="grid gap-2 md:grid-cols-[minmax(140px,240px)_1fr_auto]">
+                <div className="grid gap-2 md:grid-cols-[minmax(140px,240px)_1fr_minmax(180px,240px)_auto]">
                   <input
-                    aria-label="채널 이름"
+                    aria-label={text.channelName}
                     className="h-10 rounded-md border border-white/10 bg-black/20 px-3 text-sm text-white outline-none focus:border-[#ffb703]/70"
-                    onChange={(event) => setChannelNameDraft(event.target.value)}
+                    onChange={(event) =>
+                      setChannelNameDraft(event.target.value)
+                    }
                     value={channelNameDraft}
                   />
                   <input
-                    aria-label="채널 설명"
+                    aria-label={text.channelDescription}
                     className="h-10 rounded-md border border-white/10 bg-black/20 px-3 text-sm text-white outline-none focus:border-[#ffb703]/70"
                     onChange={(event) =>
                       setChannelDescriptionDraft(event.target.value)
                     }
                     value={channelDescriptionDraft}
                   />
+                  <fieldset
+                    aria-label={text.currentChannelVisibility}
+                    className="grid grid-cols-2 gap-1 rounded-md border border-white/10 bg-black/20 p-1"
+                  >
+                    {(["private", "open"] as const).map((visibility) => (
+                      <button
+                        className={`inline-flex h-8 items-center justify-center gap-1 rounded px-2 text-xs font-semibold ${
+                          channelVisibilityDraft === visibility
+                            ? "bg-[#ffb703] text-black"
+                            : "text-white/60 hover:bg-white/10 hover:text-white"
+                        }`}
+                        key={visibility}
+                        onClick={() => setChannelVisibilityDraft(visibility)}
+                        type="button"
+                      >
+                        {visibility === "private" ? (
+                          <Lock className="h-3.5 w-3.5" />
+                        ) : (
+                          <Unlock className="h-3.5 w-3.5" />
+                        )}
+                        {visibilityLabel(visibility, settings.language)}
+                      </button>
+                    ))}
+                  </fieldset>
                   <div className="flex gap-2">
                     <Button
-                      aria-label="채널 저장"
+                      aria-label={text.saveChannel}
                       className="border-white/10 text-white/80 hover:bg-white/10"
                       onClick={handleSaveChannel}
                       size="icon"
@@ -460,7 +757,7 @@ export function ChannelsPage() {
                       <Save className="h-4 w-4" />
                     </Button>
                     <Button
-                      aria-label="채널 삭제"
+                      aria-label={text.deleteChannel}
                       className="border-red-400/20 text-red-300 hover:bg-red-400/10"
                       disabled={isDefaultChannel}
                       onClick={handleDeleteChannel}
@@ -494,11 +791,10 @@ export function ChannelsPage() {
                       <MessageSquareText className="h-7 w-7" />
                     </div>
                     <h3 className="mt-4 text-xl font-semibold">
-                      아직 대화가 없습니다
+                      {text.noMessagesTitle}
                     </h3>
                     <p className="mt-2 text-sm leading-6 text-white/55">
-                      아래 입력창에서 ALFA 작업 대화를 시작하세요. 기본 채널은
-                      이 브라우저 화면에 먼저 저장됩니다.
+                      {text.noMessagesBody}
                     </p>
                   </div>
                 </div>
@@ -534,7 +830,7 @@ export function ChannelsPage() {
             >
               <div className="flex gap-2 rounded-lg border border-white/10 bg-black/20 p-2 focus-within:border-[#ffb703]/70">
                 <textarea
-                  aria-label="메시지 입력"
+                  aria-label={text.messageInput}
                   className="min-h-12 flex-1 resize-none bg-transparent px-2 py-2 text-sm leading-6 text-white outline-none placeholder:text-white/35"
                   onChange={(event) => setDraft(event.target.value)}
                   onKeyDown={(event) => {
@@ -543,7 +839,7 @@ export function ChannelsPage() {
                       event.currentTarget.form?.requestSubmit();
                     }
                   }}
-                  placeholder={`#${selectedChannel.name}에 메시지 보내기`}
+                  placeholder={text.messagePlaceholder(selectedChannel.name)}
                   rows={2}
                   value={draft}
                 />
@@ -565,7 +861,7 @@ export function ChannelsPage() {
           <aside className="hidden w-80 shrink-0 border-l border-white/10 bg-[#151515] p-5 xl:block">
             <div className="flex items-center gap-2 text-sm font-semibold text-white">
               <UsersRound className="h-4 w-4 text-[#ffb703]" />
-              채널 도구
+              {text.channelTools}
             </div>
             <div className="mt-4 space-y-2">
               <Button
@@ -575,7 +871,7 @@ export function ChannelsPage() {
                 variant="ghost"
               >
                 <Plus className="h-4 w-4" />
-                채널 만들기
+                {text.createChannel}
               </Button>
               <Button
                 className="w-full justify-start border-white/10 text-white/75 hover:bg-white/10"
@@ -584,7 +880,7 @@ export function ChannelsPage() {
                 variant="ghost"
               >
                 <Pencil className="h-4 w-4" />
-                이름/설명 수정
+                {text.editNameDescription}
               </Button>
               <Button
                 className="w-full justify-start border-red-400/20 text-red-300 hover:bg-red-400/10"
@@ -594,12 +890,70 @@ export function ChannelsPage() {
                 variant="ghost"
               >
                 <Trash2 className="h-4 w-4" />
-                채널 삭제
+                {text.deleteChannel}
               </Button>
             </div>
+            <div className="mt-6 border-t border-white/10 pt-5">
+              <div className="flex items-center gap-2 text-sm font-semibold text-white">
+                <Settings className="h-4 w-4 text-[#ffb703]" />
+                {text.settings}
+              </div>
+              <div className="mt-4 space-y-4">
+                <div>
+                  <div className="mb-2 text-xs font-medium uppercase tracking-[0.12em] text-white/45">
+                    {text.language}
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    {(["ko", "en"] as const).map((language) => (
+                      <Button
+                        className={`border-white/10 ${
+                          settings.language === language
+                            ? "bg-[#ffb703] text-black hover:bg-[#f5a900]"
+                            : "text-white/75 hover:bg-white/10"
+                        }`}
+                        key={language}
+                        onClick={() => handleUpdateLanguage(language)}
+                        type="button"
+                        variant="ghost"
+                      >
+                        {language === "ko" ? "한국어" : "English"}
+                      </Button>
+                    ))}
+                  </div>
+                </div>
+                <div>
+                  <div className="mb-2 text-xs font-medium uppercase tracking-[0.12em] text-white/45">
+                    {text.newChannelVisibility}
+                  </div>
+                  <div className="grid grid-cols-2 gap-2">
+                    {(["private", "open"] as const).map((visibility) => (
+                      <Button
+                        className={`border-white/10 ${
+                          settings.defaultVisibility === visibility
+                            ? "bg-[#ffb703] text-black hover:bg-[#f5a900]"
+                            : "text-white/75 hover:bg-white/10"
+                        }`}
+                        key={visibility}
+                        onClick={() =>
+                          handleUpdateDefaultVisibility(visibility)
+                        }
+                        type="button"
+                        variant="ghost"
+                      >
+                        {visibility === "private" ? (
+                          <Lock className="h-4 w-4" />
+                        ) : (
+                          <Unlock className="h-4 w-4" />
+                        )}
+                        {visibilityLabel(visibility, settings.language)}
+                      </Button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
             <p className="mt-5 text-sm leading-6 text-white/55">
-              현재 웹판은 로컬 채널 관리까지 동작합니다. 실제 멤버 초대,
-              에이전트 투입, 공유 릴레이 기록은 다음 연결 대상입니다.
+              {text.webScope}
             </p>
           </aside>
         </section>
