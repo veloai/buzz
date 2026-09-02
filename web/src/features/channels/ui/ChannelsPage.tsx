@@ -1,7 +1,9 @@
 import {
   BookMarked,
+  Clipboard,
   Globe2,
   Hash,
+  ImageIcon,
   Lock,
   MessageSquareText,
   Pencil,
@@ -76,6 +78,17 @@ const COPY = {
     language: "표시 언어",
     newChannelVisibility: "새 채널 기본 공개범위",
     currentChannelVisibility: "현재 채널 공개범위",
+    currentVisibilityLocked:
+      "기본 ALFA Control은 모든 기기에서 같은 공개 채널로 유지됩니다.",
+    mediaTools: "추가 기능",
+    comfyOnDemand: "ComfyUI 이미지 생성",
+    comfyStatus: "설치됨 · 필요할 때만 구동",
+    comfySmokeImage: "마지막 테스트 이미지",
+    comfyStartCommand: "시작 명령",
+    comfyGenerateCommand: "이미지 1장 생성",
+    copyCommand: "명령 복사",
+    commandCopied: "명령을 복사했습니다.",
+    commandCopyFailed: "명령을 복사하지 못했습니다.",
     editNameDescription: "이름/설명 수정",
     webScope:
       "새 채널은 릴레이에 저장됩니다. 비공개 채널은 이 브라우저 신원 또는 NIP-07 신원으로 잠깁니다.",
@@ -124,6 +137,17 @@ const COPY = {
     language: "Language",
     newChannelVisibility: "New channel default visibility",
     currentChannelVisibility: "Current channel visibility",
+    currentVisibilityLocked:
+      "Default ALFA Control stays as the shared open channel on every device.",
+    mediaTools: "Added tools",
+    comfyOnDemand: "ComfyUI image generation",
+    comfyStatus: "Installed · starts only when needed",
+    comfySmokeImage: "Last smoke image",
+    comfyStartCommand: "Start command",
+    comfyGenerateCommand: "Generate one image",
+    copyCommand: "Copy command",
+    commandCopied: "Command copied.",
+    commandCopyFailed: "Failed to copy command.",
     editNameDescription: "Edit name/description",
     webScope:
       "New channels are saved on the relay. Private channels are locked to this browser identity or your NIP-07 identity.",
@@ -213,7 +237,7 @@ function readLocalChannels(): ChannelSummary[] {
       .filter((channel) => channel.id !== DEFAULT_CHANNEL_ID)
       .map((channel) => ({
         ...channel,
-        visibility: "open" as const,
+        visibility: normalizeVisibility(channel.visibility),
         isVirtual: true,
       }));
   } catch {
@@ -315,6 +339,10 @@ export function ChannelsPage() {
   const [channelVisibilityDraft, setChannelVisibilityDraft] =
     useState<ChannelVisibility>("private");
   const text = COPY[settings.language];
+  const comfyStartCommand = "scripts/alfa-comfy-on-demand start";
+  const comfyGenerateCommand = "scripts/alfa-comfy-on-demand smoke-image";
+  const comfySmokeImagePath =
+    "/Users/aiso/.alfa/comfyui/output/ComfyUI_00001_.png";
 
   useEffect(() => {
     if (!channels.some((channel) => channel.id === selectedChannelId)) {
@@ -429,6 +457,54 @@ export function ChannelsPage() {
     updateSettings({ ...settings, defaultVisibility: visibility });
   }
 
+  async function handleCopyCommand(command: string) {
+    try {
+      await navigator.clipboard.writeText(command);
+      toast.success(text.commandCopied);
+    } catch {
+      toast.error(text.commandCopyFailed);
+    }
+  }
+
+  async function handleUpdateCurrentVisibility(visibility: ChannelVisibility) {
+    if (visibility === selectedChannelVisibility) return;
+
+    if (isDefaultChannel) {
+      toast.info(text.defaultRelayManaged);
+      return;
+    }
+
+    setChannelVisibilityDraft(visibility);
+
+    if (selectedChannel.isVirtual) {
+      updateLocalChannelState(
+        localChannels.map((channel) =>
+          channel.id === selectedChannel.id
+            ? { ...channel, visibility, isVirtual: true }
+            : channel,
+        ),
+      );
+      toast.success(text.channelSaved);
+      return;
+    }
+
+    try {
+      await updateChannel.mutateAsync({
+        name: selectedChannel.name,
+        description: selectedChannel.description || text.noDescription,
+        visibility,
+      });
+      await refetchChannels();
+      toast.success(text.channelSaved);
+    } catch (error) {
+      setChannelVisibilityDraft(selectedChannelVisibility);
+      toast.error(text.saveFailed, {
+        description:
+          error instanceof Error ? error.message : text.relayRejected,
+      });
+    }
+  }
+
   function updateLocalChannelState(nextChannels: ChannelSummary[]) {
     setLocalChannels(nextChannels);
     writeLocalChannels(nextChannels);
@@ -496,7 +572,7 @@ export function ChannelsPage() {
             ...channel,
             name,
             description: channelDescriptionDraft.trim() || text.noDescription,
-            visibility: "open" as const,
+            visibility: channelVisibilityDraft,
             isVirtual: true,
           }
         : channel,
@@ -704,7 +780,7 @@ export function ChannelsPage() {
           <div className="flex min-w-0 flex-1 flex-col">
             {isSettingsOpen && (
               <div className="border-b border-white/10 bg-[#161616] px-4 py-3 md:px-6">
-                <div className="grid gap-3 lg:grid-cols-2">
+                <div className="grid gap-3 lg:grid-cols-3">
                   <div>
                     <div className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.14em] text-white/45">
                       <Globe2 className="h-4 w-4 text-[#ffb703]" />
@@ -727,6 +803,43 @@ export function ChannelsPage() {
                         </Button>
                       ))}
                     </div>
+                  </div>
+
+                  <div>
+                    <div className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.14em] text-white/45">
+                      <Lock className="h-4 w-4 text-[#ffb703]" />
+                      {text.currentChannelVisibility}
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      {(["private", "open"] as const).map((visibility) => (
+                        <Button
+                          className={`border-white/10 ${
+                            selectedChannelVisibility === visibility
+                              ? "bg-[#ffb703] text-black hover:bg-[#f5a900]"
+                              : "text-white/75 hover:bg-white/10"
+                          }`}
+                          disabled={isDefaultChannel || updateChannel.isPending}
+                          key={visibility}
+                          onClick={() =>
+                            void handleUpdateCurrentVisibility(visibility)
+                          }
+                          type="button"
+                          variant="ghost"
+                        >
+                          {visibility === "private" ? (
+                            <Lock className="h-4 w-4" />
+                          ) : (
+                            <Unlock className="h-4 w-4" />
+                          )}
+                          {visibilityLabel(visibility, settings.language)}
+                        </Button>
+                      ))}
+                    </div>
+                    {isDefaultChannel && (
+                      <p className="mt-2 text-xs leading-5 text-white/45">
+                        {text.currentVisibilityLocked}
+                      </p>
+                    )}
                   </div>
 
                   <div>
@@ -758,6 +871,40 @@ export function ChannelsPage() {
                         </Button>
                       ))}
                     </div>
+                  </div>
+                </div>
+                <div className="mt-4 border-t border-white/10 pt-4 xl:hidden">
+                  <div className="mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.14em] text-white/45">
+                    <ImageIcon className="h-4 w-4 text-[#ffb703]" />
+                    {text.mediaTools}
+                  </div>
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    <button
+                      className="rounded-md border border-white/10 bg-black/20 px-3 py-2 text-left text-sm text-white/75 hover:bg-white/10"
+                      onClick={() => void handleCopyCommand(comfyStartCommand)}
+                      type="button"
+                    >
+                      <span className="block text-xs text-white/45">
+                        {text.comfyStartCommand}
+                      </span>
+                      <span className="mt-1 block font-mono text-xs text-[#ffb703]">
+                        {comfyStartCommand}
+                      </span>
+                    </button>
+                    <button
+                      className="rounded-md border border-white/10 bg-black/20 px-3 py-2 text-left text-sm text-white/75 hover:bg-white/10"
+                      onClick={() =>
+                        void handleCopyCommand(comfyGenerateCommand)
+                      }
+                      type="button"
+                    >
+                      <span className="block text-xs text-white/45">
+                        {text.comfyGenerateCommand}
+                      </span>
+                      <span className="mt-1 block font-mono text-xs text-[#ffb703]">
+                        {comfyGenerateCommand}
+                      </span>
+                    </button>
                   </div>
                 </div>
               </div>
@@ -1009,6 +1156,92 @@ export function ChannelsPage() {
                         {visibilityLabel(visibility, settings.language)}
                       </Button>
                     ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div className="mt-6 border-t border-white/10 pt-5">
+              <div className="flex items-center gap-2 text-sm font-semibold text-white">
+                <Lock className="h-4 w-4 text-[#ffb703]" />
+                {text.currentChannelVisibility}
+              </div>
+              <div className="mt-4 grid grid-cols-2 gap-2">
+                {(["private", "open"] as const).map((visibility) => (
+                  <Button
+                    className={`border-white/10 ${
+                      selectedChannelVisibility === visibility
+                        ? "bg-[#ffb703] text-black hover:bg-[#f5a900]"
+                        : "text-white/75 hover:bg-white/10"
+                    }`}
+                    disabled={isDefaultChannel || updateChannel.isPending}
+                    key={visibility}
+                    onClick={() =>
+                      void handleUpdateCurrentVisibility(visibility)
+                    }
+                    type="button"
+                    variant="ghost"
+                  >
+                    {visibility === "private" ? (
+                      <Lock className="h-4 w-4" />
+                    ) : (
+                      <Unlock className="h-4 w-4" />
+                    )}
+                    {visibilityLabel(visibility, settings.language)}
+                  </Button>
+                ))}
+              </div>
+              {isDefaultChannel && (
+                <p className="mt-3 text-xs leading-5 text-white/45">
+                  {text.currentVisibilityLocked}
+                </p>
+              )}
+            </div>
+            <div className="mt-6 border-t border-white/10 pt-5">
+              <div className="flex items-center gap-2 text-sm font-semibold text-white">
+                <ImageIcon className="h-4 w-4 text-[#ffb703]" />
+                {text.mediaTools}
+              </div>
+              <div className="mt-4 rounded-md border border-[#ffb703]/20 bg-[#ffb703]/5 p-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <div className="text-sm font-semibold text-white">
+                      {text.comfyOnDemand}
+                    </div>
+                    <div className="mt-1 text-xs text-white/50">
+                      {text.comfyStatus}
+                    </div>
+                  </div>
+                  <ImageIcon className="h-4 w-4 shrink-0 text-[#ffb703]" />
+                </div>
+                <div className="mt-3 space-y-2">
+                  {[
+                    [text.comfyStartCommand, comfyStartCommand],
+                    [text.comfyGenerateCommand, comfyGenerateCommand],
+                  ].map(([label, command]) => (
+                    <button
+                      className="flex w-full items-center gap-2 rounded border border-white/10 bg-black/20 px-2 py-2 text-left hover:bg-white/10"
+                      key={command}
+                      onClick={() => void handleCopyCommand(command)}
+                      type="button"
+                    >
+                      <Clipboard className="h-3.5 w-3.5 shrink-0 text-white/45" />
+                      <span className="min-w-0 flex-1">
+                        <span className="block text-xs text-white/45">
+                          {label}
+                        </span>
+                        <span className="block truncate font-mono text-xs text-[#ffb703]">
+                          {command}
+                        </span>
+                      </span>
+                    </button>
+                  ))}
+                </div>
+                <div className="mt-3 border-t border-white/10 pt-3">
+                  <div className="text-xs text-white/45">
+                    {text.comfySmokeImage}
+                  </div>
+                  <div className="mt-1 truncate font-mono text-xs text-white/65">
+                    {comfySmokeImagePath}
                   </div>
                 </div>
               </div>
