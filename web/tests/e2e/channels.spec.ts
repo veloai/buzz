@@ -86,8 +86,31 @@ async function installRelay(
       socket.send(JSON.stringify(["EOSE", id]));
     });
   });
-  return { writes: () => writes, reads: () => verificationReads };
+  return {
+    pubkey: browserPubkey,
+    writes: () => writes,
+    reads: () => verificationReads,
+  };
 }
+
+test("account dialog shows the authenticated public identity without publishing", async ({
+  page,
+}) => {
+  const relay = await installRelay(page, "owner");
+  await openChannel(page);
+  await page
+    .getByRole("button", { name: "Current browser account", exact: true })
+    .click();
+  await expect(page.getByTestId("browser-public-key")).toHaveText(relay.pubkey);
+  await page.getByRole("button", { name: "Close", exact: true }).click();
+  await expect(page.getByRole("dialog")).not.toBeVisible();
+  await page.reload();
+  await page
+    .getByRole("button", { name: "Current browser account", exact: true })
+    .click();
+  await expect(page.getByTestId("browser-public-key")).toHaveText(relay.pubkey);
+  expect(relay.writes()).toBe(0);
+});
 
 async function openChannel(page: Page) {
   await page.goto("/channels");

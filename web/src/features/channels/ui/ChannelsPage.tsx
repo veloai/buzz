@@ -22,6 +22,7 @@ import { toast } from "sonner";
 import { truncatePubkey } from "@/shared/lib/pubkey";
 import { Button } from "@/shared/ui/button";
 import { ChannelSaveStatus } from "./ChannelSaveStatus";
+import { BrowserIdentityButton } from "./BrowserIdentityButton";
 import {
   DEFAULT_CHANNEL_ID,
   useChannelMessages,
@@ -725,6 +726,7 @@ export function ChannelsPage() {
           </div>
 
           <div className="flex items-center gap-2">
+            <BrowserIdentityButton language={settings.language} />
             <Button
               aria-label={text.settings}
               className="border-white/10 text-white/70 hover:bg-white/10"

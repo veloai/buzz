@@ -82,6 +82,18 @@ export function hasNip07Provider(): boolean {
   return typeof window !== "undefined" && window.nostr != null;
 }
 
+/** Return the public identity used for relay authentication, never the secret key. */
+export async function getNostrPublicKey(): Promise<string> {
+  const provider = typeof window === "undefined" ? undefined : window.nostr;
+  const pubkey = provider
+    ? await provider.getPublicKey()
+    : getPublicKey(getBrowserSecretKey());
+  if (!/^[0-9a-f]{64}$/i.test(pubkey)) {
+    throw new Error("Invalid browser public key.");
+  }
+  return pubkey.toLowerCase();
+}
+
 function sameUnsignedEvent(
   expected: UnsignedNostrEvent,
   actual: SignedNostrEvent,
