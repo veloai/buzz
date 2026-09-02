@@ -133,7 +133,9 @@ export function useChannelMessages(
         queryClient.setQueryData<ChannelMessage[]>(
           ["channel-messages", channelId],
           (currentMessages = []) =>
-            sortMessages(dedupById([...currentMessages, eventToMessage(event)])),
+            sortMessages(
+              dedupById([...currentMessages, eventToMessage(event)]),
+            ),
         );
       },
       (error) => {
@@ -264,8 +266,8 @@ export function useUpdateChannel(channelId: string) {
       name: string;
       description: string;
       visibility: "open" | "private";
-    }) =>
-      publishEvent(
+    }) => {
+      const event = await publishEvent(
         relayWsUrl(),
         {
           kind: 9002,
@@ -278,7 +280,32 @@ export function useUpdateChannel(channelId: string) {
           content: "",
         },
         { requireNip07: visibility === "private" },
-      ),
+      );
+
+      // An EVENT acknowledgement alone is not proof that discovery metadata
+      // reflects the requested settings. Never report an unconfirmed save.
+      for (let attempt = 0; attempt < 5; attempt += 1) {
+        const events = await queryEvents(relayWsUrl(), {
+          kinds: [39000],
+          "#d": [channelId],
+        });
+        const latest = events
+          .filter((item) => firstTag(item, "d") === channelId)
+          .sort((a, b) => b.created_at - a.created_at)[0];
+        const channel = latest ? eventToChannel(latest) : undefined;
+        if (
+          channel?.name === name &&
+          channel.description === description &&
+          channel.visibility === visibility
+        ) {
+          return event;
+        }
+        if (attempt < 4) {
+          await new Promise((resolve) => setTimeout(resolve, 200));
+        }
+      }
+      throw new Error("Channel update was not confirmed by the relay.");
+    },
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ["channels"] });
       void queryClient.invalidateQueries({

@@ -21,6 +21,7 @@ import { type FormEvent, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { truncatePubkey } from "@/shared/lib/pubkey";
 import { Button } from "@/shared/ui/button";
+import { ChannelSaveStatus } from "./ChannelSaveStatus";
 import {
   DEFAULT_CHANNEL_ID,
   useChannelMessages,
@@ -373,6 +374,11 @@ export function ChannelsPage() {
   const createChannel = useCreateChannel();
   const updateChannel = useUpdateChannel(selectedChannel.id);
   const archiveChannel = useArchiveChannel(selectedChannel.id);
+  const resetChannelUpdate = updateChannel.reset;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: A failure belongs to the selected channel, not the next one.
+  useEffect(() => {
+    resetChannelUpdate();
+  }, [selectedChannel.id, resetChannelUpdate]);
   const [draft, setDraft] = useState("");
   const [localMessages, setLocalMessages] = useState<ChannelMessage[]>(() =>
     readLocalMessages(channels[0].id),
@@ -775,6 +781,12 @@ export function ChannelsPage() {
             </Button>
           </div>
         </header>
+
+        <ChannelSaveStatus
+          error={updateChannel.error}
+          pending={updateChannel.isPending}
+          language={settings.language}
+        />
 
         <section className="flex min-h-0 flex-1">
           <div className="flex min-w-0 flex-1 flex-col">
